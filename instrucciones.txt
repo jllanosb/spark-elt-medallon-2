@@ -8,11 +8,6 @@ hive --service metastore &
 sleep 10
 hive --service hiveserver2 &
 
-cd airflow
-# python3 -m venv venv --> Solo la primera vez
-source venv/bin/activate
-airflow standalone
-
 -------------------------
  2. CARGAR CAPA WORKLOAD 
 -------------------------
@@ -122,6 +117,13 @@ spark-submit \
   --deploy-mode client \
   --packages org.mongodb.spark:mongo-spark-connector_2.12:10.4.0 \
   /home/hadoop/spark-elt-medallon/procesos/export_gold_to_mongo.py
+--------------------
+9. ORQUESTACION
+--------------------
+cd airflow
+# python3 -m venv venv --> Solo la primera vez
+source venv/bin/activate
+airflow standalone
 
 --------------------
 9. DETENER SERVICIOS

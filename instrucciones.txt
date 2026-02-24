@@ -112,11 +112,15 @@ head -5 /home/hadoop/spark-elt-medallon/datalake/gold.csv
 --------------------
 8. MIGRAR A MONGODB
 --------------------
+Crear Base Datos: medallon
+Coleccion: gold
+
 spark-submit \
   --master yarn \
   --deploy-mode client \
   --packages org.mongodb.spark:mongo-spark-connector_2.12:10.4.0 \
   /home/hadoop/spark-elt-medallon/procesos/export_gold_to_mongo.py
+
 --------------------
 9. ORQUESTACION
 --------------------
@@ -126,7 +130,7 @@ source venv/bin/activate
 airflow standalone
 
 --------------------
-9. DETENER SERVICIOS
+10. DETENER SERVICIOS
 --------------------
 stop-yarn.sh
 stop-dfs.sh

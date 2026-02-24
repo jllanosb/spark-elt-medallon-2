@@ -1,0 +1,133 @@
+----------------------
+ 1. EJECUTAR SERVICIOS 
+----------------------
+start-dfs.sh
+start-yarn.sh
+hive --service metastore &
+sleep 10
+hive --service hiveserver2 &
+
+cd airflow
+# python3 -m venv venv --> Solo la primera vez
+source venv/bin/activate
+airflow standalone
+
+-------------------------
+ 2. CARGAR CAPA WORKLOAD 
+-------------------------
+--1. crear ruta hdfs para guardar .data
+hdfs dfs -mkdir -p /user/hadoop/dataset
+hdfs dfs -put /home/hadoop/spark-elt-medallon/dataset/* /user/hadoop/dataset/
+hdfs dfs -ls /user/hadoop/dataset
+
+
+spark-submit \
+  --master yarn \
+  --deploy-mode client \
+  --conf spark.sql.warehouse.dir=/user/hadoop/warehouse \
+  --conf spark.serializer=org.apache.spark.serializer.KryoSerializer \
+  /home/hadoop/spark-elt-medallon/procesos/poblar_capa_workload.py \
+  --env TopicosB \
+  --username hadoop \
+  --base_path /user \
+  --local_data_path /user/hadoop/dataset
+
+------------------------
+ 3. CARGAR CAPA LANDING 
+------------------------
+  --1. crear ruta hdfs para guardar AVSC
+hdfs dfs -mkdir -p /user/hadoop/datalake/schema/TOPICOSB_LANDING/
+hdfs dfs -put -f /home/hadoop/spark-elt-medallon/schema/*.avsc /user/hadoop/datalake/schema/TOPICOSB_LANDING/
+hdfs dfs -ls /user/hadoop/datalake/schema/TOPICOSB_LANDING/
+
+
+spark-submit \
+  --master yarn \
+  --deploy-mode client \
+  --conf spark.sql.warehouse.dir=/user/hadoop/warehouse \
+  --conf spark.sql.avro.compression.codec=snappy \
+  --packages org.apache.spark:spark-avro_2.12:3.5.0 \
+  /home/hadoop/spark-elt-medallon/procesos/poblar_capa_landing.py \
+  --env TopicosB \
+  --username hadoop \
+  --base_path /user \
+  --schema_path /user/hadoop/datalake/schema \
+  --source_db topicosb_workload
+
+------------------------
+ 4. CARGAR CAPA CURATED 
+------------------------
+spark-submit \
+  --master yarn \
+  --deploy-mode client \
+  --conf spark.sql.warehouse.dir=/user/hadoop/warehouse \
+  --conf spark.sql.parquet.compression.codec=snappy \
+  --conf spark.dynamicAllocation.enabled=true \
+  --conf spark.executor.instances=10 \
+  --conf spark.executor.memory=4g \
+  --conf spark.driver.memory=2g \
+  /home/hadoop/spark-elt-medallon/procesos/poblar_capa_curated.py \
+  --env TopicosB \
+  --username hadoop \
+  --base_path /user \
+  --source_db landing \
+  --enable-validation
+
+---------------------------
+ 5. CARGAR CAPA FUNCTIONAL
+---------------------------
+
+spark-submit \
+  --master yarn \
+  --deploy-mode client \
+  --conf spark.sql.warehouse.dir=/user/hadoop/warehouse \
+  --conf spark.yarn.queue=default \
+  --conf spark.sql.parquet.compression.codec=snappy \
+  --conf spark.dynamicAllocation.enabled=false \
+  /home/hadoop/spark-elt-medallon/procesos/poblar_capa_functional.py \
+  --env TopicosB \
+  --username hadoop \
+  --base_path /user \
+  --source_db curated \
+  --num-executors 8 \
+  --executor-memory 2g \
+  --executor-cores 2 \
+  --enable-broadcast
+
+-------------------------
+ 6. EXPORTAR GOLD TO CSV
+-------------------------
+spark-submit \
+  --master yarn \
+  --deploy-mode client \
+  --conf spark.sql.warehouse.dir=/user/hadoop/warehouse \
+  /home/hadoop/spark-elt-medallon/procesos/export_gold_to_csv.py
+
+----------------------------------------------
+ 7. CREAR COPIAR part*.csv RENOMBRAR GOLD.CSV
+----------------------------------------------
+# Copiar
+cp /home/hadoop/spark-elt-medallon/datalake/temp/part-*.csv /home/hadoop/spark-elt-medallon/datalake/gold.csv
+
+# Verificar resultado
+wc -l /home/hadoop/spark-elt-medallon/datalake/gold.csv
+head -5 /home/hadoop/spark-elt-medallon/datalake/gold.csv
+
+--------------------
+8. MIGRAR A MONGODB
+--------------------
+spark-submit \
+  --master yarn \
+  --deploy-mode client \
+  --packages org.mongodb.spark:mongo-spark-connector_2.12:10.4.0 \
+  /home/hadoop/spark-elt-medallon/procesos/export_gold_to_mongo.py
+
+--------------------
+9. DETENER SERVICIOS
+--------------------
+stop-yarn.sh
+stop-dfs.sh
+
+# Si HiveServer2 está en ejecución:
+pkill -f HiveServer2
+pkill -f HiveMetaStore
